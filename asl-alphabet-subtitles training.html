@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ASL Alphabet → Subtitles</title>
+<style>
+  :root {
+    --bg: #0e0f13;
+    --panel: #17181f;
+    --accent: #6ee7b7;
+    --text: #f5f5f7;
+    --muted: #9aa0ab;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px;
+    gap: 16px;
+  }
+  h1 { font-size: 1.3rem; font-weight: 600; margin: 0; }
+  .top-toolbar {
+    width: 640px;
+    max-width: 95vw;
+    background: #1e3a2e;
+    border: 2px solid var(--accent);
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .top-toolbar .hint { font-size: 0.8rem; color: var(--muted); width: 100%; }
+  .stage {
+    position: relative;
+    width: 640px;
+    max-width: 95vw;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+  }
+  video { display: none; }
+  canvas { width: 100%; display: block; transform: scaleX(-1); }
+  .subtitle-bar {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+  }
+  .letter {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--accent);
+    min-height: 3.5rem;
+  }
+  .word {
+    font-size: 1.6rem;
+    letter-spacing: 2px;
+    min-height: 2rem;
+    word-break: break-all;
+  }
+  .panel {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 20px;
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .panel b { color: var(--text); }
+  .status { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .pill {
+    background: #232530;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+  }
+  .pill.active { background: var(--accent); color: #05130c; font-weight: 600; }
+  button {
+    background: #232530;
+    color: var(--text);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  button:hover { background: #2c2f3d; }
+  .top-toolbar button.primary {
+    background: var(--accent);
+    color: #05130c;
+    font-weight: 700;
+  }
+  .top-toolbar button.primary:hover { background: #8ff0c4; }
+  .sample-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .count-chip {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #232530;
+  }
+  .count-chip.trained { background: #1e3a2e; color: var(--accent); }
+  .count-chip { cursor: pointer; }
+  .count-chip:hover { outline: 1px solid #555; }
+  .debug-panel {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 20px;
+    font-size: 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .debug-panel .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .debug-panel .label { color: var(--muted); }
+  .threshold-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .threshold-row input[type="range"] { flex: 1; }
+  #candidateList { margin-top: 8px; }
+  #candidateList div { display: flex; justify-content: space-between; padding: 2px 0; }
+  #candidateList .best { color: var(--accent); }
+  .backup-wrap {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: none;
+  }
+  .backup-wrap.visible { display: block; }
+  .backup-wrap textarea {
+    width: 100%;
+    height: 120px;
+    background: #0b0c10;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>ASL Alphabet → Live Subtitles</h1>
+
+<div class="top-toolbar">
+  <span class="hint">Export/Import are always here at the top so they're never hard to find.</span>
+  <button id="exportBtnTop" class="primary">⬇ Export training data</button>
+  <button onclick="document.getElementById('importInputTop').click()">⬆ Import training data</button>
+  <input type="file" id="importInputTop" accept=".json" style="display:none" />
+</div>
+
+<div class="backup-wrap" id="backupWrap">
+  <div style="font-size:0.8rem;color:var(--muted);margin-bottom:6px;">
+    Backup copy of your exported JSON (in case the file download didn't trigger). Click inside, select all, and copy/paste into a text file named <b>asl-training-data.json</b>.
+  </div>
+  <textarea id="backupText" readonly></textarea>
+</div>
+
+<div class="stage">
+  <video id="webcam" autoplay playsinline muted></video>
+  <canvas id="output_canvas"></canvas>
+</div>
+
+<div class="subtitle-bar">
+  <div class="letter" id="letterDisplay">—</div>
+  <div class="word" id="wordDisplay"></div>
+</div>
+
+<div class="panel">
+  <div><b>Step 1 — Enroll each letter.</b> Hold down the matching keyboard key while you sign that ASL letter. Do this for a couple of seconds per letter, from a few slightly different angles. Skip J and Z (they involve motion, not a static shape).</div>
+  <div><b>Step 2 — Classify.</b> Once a letter has samples, it's recognized live. The big letter above is the current prediction; it gets appended to the word below once it holds steady.</div>
+  <div style="margin-top:6px;">Your enrolled samples auto-save to this browser (same computer, same browser) so refreshing the page is safe. Use <b>Export</b> (top of page) before switching computers, clearing browser data, or backing up before your demo.</div>
+  <div class="status">
+    <span class="pill" id="modeIndicator">Mode: Recognizing</span>
+    <span class="pill" id="handIndicator">Hand: not detected</span>
+    <button id="clearWordBtn">Clear word</button>
+    <button id="backspaceBtn">Backspace</button>
+    <button id="spaceBtn">Add space</button>
+  </div>
+  <div class="sample-counts" id="sampleCounts"></div>
+  <div style="font-size:0.75rem;color:var(--muted);margin-top:6px;">Click a letter chip to clear its samples and re-enroll it.</div>
+</div>
+
+<div class="debug-panel">
+  <div class="row"><span class="label">Raw prediction (pre-smoothing):</span><span id="dbgRaw">—</span></div>
+  <div class="row"><span class="label">Nearest neighbor distance:</span><span id="dbgDist">—</span></div>
+  <div class="threshold-row">
+    <span class="label" style="white-space:nowrap;">Reject threshold: <span id="thresholdVal">0.9</span></span>
+    <input type="range" id="thresholdSlider" min="0.3" max="2.5" step="0.05" value="0.9" />
+  </div>
+  <div id="candidateList"></div>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+    <button id="resetAllBtn">Reset ALL training data</button>
+    <button id="exportBtnBottom">Export training data</button>
+    <button onclick="document.getElementById('importInputBottom').click()">Import training data</button>
+    <input type="file" id="importInputBottom" accept=".json" style="display:none" />
+  </div>
+</div>
+
+<script type="module">
+import {
+  HandLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+// ---------- CONFIG ----------
+const LETTERS = "ABCDEFGHIKLMNOPQRSTUVWXY".split(""); // J and Z skipped (motion letters)
+const SAMPLES_PER_LETTER_TARGET = 15; // just for the UI "trained" indicator
+const KNN_K = 5;
+const SMOOTHING_WINDOW = 10;       // frames considered for majority vote
+const STABILITY_ENTER = 0.7;       // fraction of window needed to LOCK ONTO a new letter
+const STABILITY_EXIT = 0.3;        // fraction of window the locked letter must fall BELOW to release it
+let DISTANCE_REJECT_THRESHOLD = 0.9;
+
+// ---------- STATE ----------
+const STORAGE_KEY = "asl_training_data_v1";
+const trainingData = {};
+LETTERS.forEach(l => trainingData[l] = []);
+
+function saveTrainingData() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trainingData));
+  } catch (err) {
+    console.error("Couldn't save training data to localStorage:", err);
+  }
+}
+
+function loadTrainingData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const loaded = JSON.parse(raw);
+    LETTERS.forEach(l => {
+      if (Array.isArray(loaded[l])) trainingData[l] = loaded[l];
+    });
+  } catch (err) {
+    console.error("Couldn't load saved training data:", err);
+  }
+}
+loadTrainingData();
+
+let recordingLetter = null;
+let predictionHistory = [];
+let stableLetter = null;
+let word = "";
+
+// ---------- DOM ----------
+const video = document.getElementById("webcam");
+const canvas = document.getElementById("output_canvas");
+const ctx = canvas.getContext("2d");
+const letterDisplay = document.getElementById("letterDisplay");
+const wordDisplay = document.getElementById("wordDisplay");
+const modeIndicator = document.getElementById("modeIndicator");
+const handIndicator = document.getElementById("handIndicator");
+const sampleCountsEl = document.getElementById("sampleCounts");
+const backupWrap = document.getElementById("backupWrap");
+const backupText = document.getElementById("backupText");
+
+document.getElementById("clearWordBtn").onclick = () => { word = ""; renderWord(); };
+document.getElementById("backspaceBtn").onclick = () => { word = word.slice(0, -1); renderWord(); };
+document.getElementById("spaceBtn").onclick = () => { word += " "; renderWord(); };
+document.getElementById("resetAllBtn").onclick = () => {
+  if (!confirm("This will permanently delete all enrolled samples for every letter. Continue?")) return;
+  LETTERS.forEach(l => trainingData[l] = []);
+  saveTrainingData();
+  renderSampleCounts();
+};
+
+// ---------- ROBUST EXPORT (always shows a visible backup, never just relies on the download silently working) ----------
+function doExport() {
+  const json = JSON.stringify(trainingData);
+
+  // Always show the on-screen backup, regardless of whether the download works.
+  backupText.value = json;
+  backupWrap.classList.add("visible");
+  backupWrap.scrollIntoView({ behavior: "smooth", block: "center" });
+  backupText.focus();
+  backupText.select();
+
+  // Attempt the normal file download too.
+  try {
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "asl-training-data.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (err) {
+    console.error("Automatic download failed, use the on-screen backup box:", err);
+  }
+}
+
+function doImportFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const loaded = JSON.parse(reader.result);
+      LETTERS.forEach(l => {
+        if (Array.isArray(loaded[l])) trainingData[l] = loaded[l];
+      });
+      saveTrainingData();
+      renderSampleCounts();
+      alert("Training data imported.");
+    } catch (err) {
+      alert("Couldn't read that file — is it a valid export from this app?");
+    }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById("exportBtnTop").onclick = doExport;
+document.getElementById("exportBtnBottom").onclick = doExport;
+document.getElementById("importInputTop").addEventListener("change", (e) => {
+  doImportFile(e.target.files[0]);
+  e.target.value = "";
+});
+document.getElementById("importInputBottom").addEventListener("change", (e) => {
+  doImportFile(e.target.files[0]);
+  e.target.value = "";
+});
+
+const thresholdSlider = document.getElementById("thresholdSlider");
+const thresholdVal = document.getElementById("thresholdVal");
+thresholdSlider.addEventListener("input", () => {
+  DISTANCE_REJECT_THRESHOLD = parseFloat(thresholdSlider.value);
+  thresholdVal.textContent = DISTANCE_REJECT_THRESHOLD.toFixed(2);
+});
+
+function renderSampleCounts() {
+  sampleCountsEl.innerHTML = "";
+  LETTERS.forEach(l => {
+    const n = trainingData[l].length;
+    const chip = document.createElement("span");
+    chip.className = "count-chip" + (n >= SAMPLES_PER_LETTER_TARGET ? " trained" : "");
+    chip.textContent = `${l}:${n}`;
+    chip.title = "Click to clear this letter's samples";
+    chip.onclick = () => { trainingData[l] = []; saveTrainingData(); renderSampleCounts(); };
+    sampleCountsEl.appendChild(chip);
+  });
+}
+renderSampleCounts();
+
+function renderWord() {
+  wordDisplay.textContent = word;
+}
+
+// ---------- KEYBOARD ENROLLMENT ----------
+window.addEventListener("keydown", (e) => {
+  const key = e.key.toUpperCase();
+  if (LETTERS.includes(key) && recordingLetter !== key) {
+    recordingLetter = key;
+    modeIndicator.textContent = `Mode: Enrolling "${key}"`;
+  }
+});
+window.addEventListener("keyup", (e) => {
+  const key = e.key.toUpperCase();
+  if (key === recordingLetter) {
+    recordingLetter = null;
+    modeIndicator.textContent = "Mode: Recognizing";
+    saveTrainingData();
+    renderSampleCounts();
+  }
+});
+
+// ---------- LANDMARK NORMALIZATION ----------
+const CANONICAL_HAND = "Right";
+
+function normalizeLandmarks(landmarks, handednessLabel) {
+  const wrist = landmarks[0];
+  const middleTip = landmarks[12];
+  const scale = Math.hypot(
+    middleTip.x - wrist.x,
+    middleTip.y - wrist.y,
+    middleTip.z - wrist.z
+  ) || 1e-6;
+
+  const mirror = (handednessLabel === CANONICAL_HAND) ? 1 : -1;
+
+  const flat = [];
+  for (const p of landmarks) {
+    flat.push(mirror * (p.x - wrist.x) / scale);
+    flat.push((p.y - wrist.y) / scale);
+    flat.push((p.z - wrist.z) / scale);
+  }
+  return flat;
+}
+
+function distance(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
+// ---------- KNN CLASSIFIER ----------
+function classify(vector) {
+  const scored = [];
+  for (const letter of LETTERS) {
+    for (const sample of trainingData[letter]) {
+      scored.push({ letter, dist: distance(vector, sample) });
+    }
+  }
+  if (scored.length === 0) return { prediction: null, topK: [], nearestDist: null };
+
+  scored.sort((a, b) => a.dist - b.dist);
+  const topK = scored.slice(0, KNN_K);
+  const nearestDist = topK[0].dist;
+
+  if (nearestDist > DISTANCE_REJECT_THRESHOLD) {
+    return { prediction: null, topK, nearestDist };
+  }
+
+  const votes = {};
+  for (const { letter } of topK) votes[letter] = (votes[letter] || 0) + 1;
+
+  let best = null, bestCount = -1;
+  for (const [letter, count] of Object.entries(votes)) {
+    if (count > bestCount) { best = letter; bestCount = count; }
+  }
+  return { prediction: best, topK, nearestDist };
+}
+
+// ---------- SMOOTHING ----------
+function updateSmoothedPrediction(rawPrediction) {
+  predictionHistory.push(rawPrediction);
+  if (predictionHistory.length > SMOOTHING_WINDOW) predictionHistory.shift();
+
+  const counts = {};
+  for (const p of predictionHistory) {
+    if (p === null) continue;
+    counts[p] = (counts[p] || 0) + 1;
+  }
+
+  let best = null, bestCount = 0;
+  for (const [letter, count] of Object.entries(counts)) {
+    if (count > bestCount) { best = letter; bestCount = count; }
+  }
+  const bestAgreement = bestCount / predictionHistory.length;
+
+  if (stableLetter) {
+    const currentAgreement = (counts[stableLetter] || 0) / predictionHistory.length;
+    if (currentAgreement < STABILITY_EXIT) {
+      stableLetter = null;
+    }
+  }
+
+  if (!stableLetter && best && bestAgreement >= STABILITY_ENTER) {
+    stableLetter = best;
+    word += best;
+    renderWord();
+  }
+
+  letterDisplay.textContent = stableLetter || "…";
+}
+
+// ---------- DRAWING ----------
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function drawLandmarks(landmarks) {
+  ctx.strokeStyle = "#6ee7b7";
+  ctx.lineWidth = 2;
+  for (const [a, b] of CONNECTIONS) {
+    const p1 = landmarks[a], p2 = landmarks[b];
+    ctx.beginPath();
+    ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+    ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#f5f5f7";
+  for (const p of landmarks) {
+    ctx.beginPath();
+    ctx.arc(p.x * canvas.width, p.y * canvas.height, 3, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
+
+// ---------- DEBUG PANEL ----------
+const dbgRaw = document.getElementById("dbgRaw");
+const dbgDist = document.getElementById("dbgDist");
+const candidateList = document.getElementById("candidateList");
+
+function renderDebug(prediction, topK, nearestDist) {
+  dbgRaw.textContent = prediction || "(rejected — no close match)";
+  dbgDist.textContent = nearestDist !== null ? nearestDist.toFixed(3) : "—";
+
+  candidateList.innerHTML = "";
+  const seen = new Set();
+  for (const { letter, dist } of topK) {
+    if (seen.has(letter)) continue;
+    seen.add(letter);
+    const row = document.createElement("div");
+    if (letter === prediction) row.classList.add("best");
+    row.innerHTML = `<span>${letter}</span><span>${dist.toFixed(3)}</span>`;
+    candidateList.appendChild(row);
+  }
+}
+
+// ---------- MAIN LOOP ----------
+let handLandmarker;
+
+async function init() {
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+    },
+    runningMode: "VIDEO",
+    numHands: 1
+  });
+
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+  video.srcObject = stream;
+  await new Promise(resolve => video.onloadedmetadata = resolve);
+  video.play();
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  requestAnimationFrame(loop);
+}
+
+let lastVideoTime = -1;
+
+function loop() {
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const results = handLandmarker.detectForVideo(video, performance.now());
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    if (results.landmarks && results.landmarks.length > 0) {
+      const landmarks = results.landmarks[0];
+      const handednessLabel = results.handednesses?.[0]?.[0]?.categoryName || CANONICAL_HAND;
+      drawLandmarks(landmarks);
+      handIndicator.textContent = `Hand: detected (${handednessLabel})`;
+
+      const vector = normalizeLandmarks(landmarks, handednessLabel);
+
+      if (recordingLetter) {
+        trainingData[recordingLetter].push(vector);
+      } else {
+        const { prediction, topK, nearestDist } = classify(vector);
+        updateSmoothedPrediction(prediction);
+        renderDebug(prediction, topK, nearestDist);
+      }
+    } else {
+      handIndicator.textContent = "Hand: not detected";
+      updateSmoothedPrediction(null);
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+init().catch(err => {
+  console.error(err);
+  alert("Camera or model failed to load. Check console for details.");
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ASL Alphabet → Subtitles</title>
+<style>
+  :root {
+    --bg: #0e0f13;
+    --panel: #17181f;
+    --accent: #6ee7b7;
+    --text: #f5f5f7;
+    --muted: #9aa0ab;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px;
+    gap: 16px;
+  }
+  h1 { font-size: 1.3rem; font-weight: 600; margin: 0; }
+  .stage {
+    position: relative;
+    width: 640px;
+    max-width: 95vw;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+  }
+  video { display: none; }
+  canvas { width: 100%; display: block; transform: scaleX(-1); } /* mirror for natural selfie view */
+  .subtitle-bar {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+  }
+  .letter {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--accent);
+    min-height: 3.5rem;
+  }
+  .word {
+    font-size: 1.6rem;
+    letter-spacing: 2px;
+    min-height: 2rem;
+    word-break: break-all;
+  }
+  .panel {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 20px;
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .panel b { color: var(--text); }
+  .status { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .pill {
+    background: #232530;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+  }
+  .pill.active { background: var(--accent); color: #05130c; font-weight: 600; }
+  button {
+    background: #232530;
+    color: var(--text);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  button:hover { background: #2c2f3d; }
+  .sample-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .count-chip {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #232530;
+  }
+  .count-chip.trained { background: #1e3a2e; color: var(--accent); }
+  .count-chip { cursor: pointer; }
+  .count-chip:hover { outline: 1px solid #555; }
+  .debug-panel {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 20px;
+    font-size: 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .debug-panel .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .debug-panel .label { color: var(--muted); }
+  .threshold-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .threshold-row input[type="range"] { flex: 1; }
+  #candidateList { margin-top: 8px; }
+  #candidateList div { display: flex; justify-content: space-between; padding: 2px 0; }
+  #candidateList .best { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>ASL Alphabet → Live Subtitles</h1>
+
+<div class="stage">
+  <video id="webcam" autoplay playsinline muted></video>
+  <canvas id="output_canvas"></canvas>
+</div>
+
+<div class="subtitle-bar">
+  <div class="letter" id="letterDisplay">—</div>
+  <div class="word" id="wordDisplay"></div>
+</div>
+
+<div class="panel">
+  <div><b>Step 1 — Enroll each letter.</b> Hold down the matching keyboard key while you sign that ASL letter. Do this for a couple of seconds per letter, from a few slightly different angles. Skip J and Z (they involve motion, not a static shape).</div>
+  <div><b>Step 2 — Classify.</b> Once a letter has samples, it's recognized live. The big letter above is the current prediction; it gets appended to the word below once it holds steady.</div>
+  <div class="status">
+    <span class="pill" id="modeIndicator">Mode: Recognizing</span>
+    <span class="pill" id="handIndicator">Hand: not detected</span>
+    <button id="clearWordBtn">Clear word</button>
+    <button id="backspaceBtn">Backspace</button>
+    <button id="spaceBtn">Add space</button>
+  </div>
+  <div class="sample-counts" id="sampleCounts"></div>
+  <div style="font-size:0.75rem;color:var(--muted);margin-top:6px;">Click a letter chip to clear its samples and re-enroll it.</div>
+</div>
+
+<div class="debug-panel">
+  <div class="row"><span class="label">Raw prediction (pre-smoothing):</span><span id="dbgRaw">—</span></div>
+  <div class="row"><span class="label">Nearest neighbor distance:</span><span id="dbgDist">—</span></div>
+  <div class="threshold-row">
+    <span class="label" style="white-space:nowrap;">Reject threshold: <span id="thresholdVal">0.9</span></span>
+    <input type="range" id="thresholdSlider" min="0.3" max="2.5" step="0.05" value="0.9" />
+  </div>
+  <div id="candidateList"></div>
+  <div style="margin-top:10px;">
+    <button id="resetAllBtn">Reset ALL training data</button>
+  </div>
+</div>
+
+<script type="module">
+import {
+  HandLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+// ---------- CONFIG ----------
+const LETTERS = "ABCDEFGHIKLMNOPQRSTUVWXY".split(""); // J and Z skipped (motion letters)
+const SAMPLES_PER_LETTER_TARGET = 15; // just for the UI "trained" indicator
+const KNN_K = 5;
+const SMOOTHING_WINDOW = 10;       // frames considered for majority vote
+const STABILITY_THRESHOLD = 0.7;   // fraction of window that must agree
+let DISTANCE_REJECT_THRESHOLD = 0.9; // if nearest neighbors are all farther than this, show "?" instead of guessing — now live-adjustable
+
+// ---------- STATE ----------
+const trainingData = {};   // letter -> array of normalized landmark vectors
+LETTERS.forEach(l => trainingData[l] = []);
+
+let recordingLetter = null; // currently held-down key being enrolled
+let predictionHistory = []; // rolling buffer of recent predictions
+let stableLetter = null;    // current agreed-upon letter
+let word = "";
+
+// ---------- DOM ----------
+const video = document.getElementById("webcam");
+const canvas = document.getElementById("output_canvas");
+const ctx = canvas.getContext("2d");
+const letterDisplay = document.getElementById("letterDisplay");
+const wordDisplay = document.getElementById("wordDisplay");
+const modeIndicator = document.getElementById("modeIndicator");
+const handIndicator = document.getElementById("handIndicator");
+const sampleCountsEl = document.getElementById("sampleCounts");
+
+document.getElementById("clearWordBtn").onclick = () => { word = ""; renderWord(); };
+document.getElementById("backspaceBtn").onclick = () => { word = word.slice(0, -1); renderWord(); };
+document.getElementById("spaceBtn").onclick = () => { word += " "; renderWord(); };
+document.getElementById("resetAllBtn").onclick = () => {
+  LETTERS.forEach(l => trainingData[l] = []);
+  renderSampleCounts();
+};
+
+const thresholdSlider = document.getElementById("thresholdSlider");
+const thresholdVal = document.getElementById("thresholdVal");
+thresholdSlider.addEventListener("input", () => {
+  DISTANCE_REJECT_THRESHOLD = parseFloat(thresholdSlider.value);
+  thresholdVal.textContent = DISTANCE_REJECT_THRESHOLD.toFixed(2);
+});
+
+function renderSampleCounts() {
+  sampleCountsEl.innerHTML = "";
+  LETTERS.forEach(l => {
+    const n = trainingData[l].length;
+    const chip = document.createElement("span");
+    chip.className = "count-chip" + (n >= SAMPLES_PER_LETTER_TARGET ? " trained" : "");
+    chip.textContent = `${l}:${n}`;
+    chip.title = "Click to clear this letter's samples";
+    chip.onclick = () => { trainingData[l] = []; renderSampleCounts(); };
+    sampleCountsEl.appendChild(chip);
+  });
+}
+renderSampleCounts();
+
+function renderWord() {
+  wordDisplay.textContent = word;
+}
+
+// ---------- KEYBOARD ENROLLMENT ----------
+window.addEventListener("keydown", (e) => {
+  const key = e.key.toUpperCase();
+  if (LETTERS.includes(key) && recordingLetter !== key) {
+    recordingLetter = key;
+    modeIndicator.textContent = `Mode: Enrolling "${key}"`;
+  }
+});
+window.addEventListener("keyup", (e) => {
+  const key = e.key.toUpperCase();
+  if (key === recordingLetter) {
+    recordingLetter = null;
+    modeIndicator.textContent = "Mode: Recognizing";
+    renderSampleCounts();
+  }
+});
+
+// ---------- LANDMARK NORMALIZATION ----------
+// Wrist (landmark 0) becomes the origin; scale by wrist-to-middle-fingertip (landmark 12) distance.
+// This makes the vector invariant to hand position and distance from camera.
+function normalizeLandmarks(landmarks) {
+  const wrist = landmarks[0];
+  const middleTip = landmarks[12];
+  const scale = Math.hypot(
+    middleTip.x - wrist.x,
+    middleTip.y - wrist.y,
+    middleTip.z - wrist.z
+  ) || 1e-6;
+
+  const flat = [];
+  for (const p of landmarks) {
+    flat.push((p.x - wrist.x) / scale);
+    flat.push((p.y - wrist.y) / scale);
+    flat.push((p.z - wrist.z) / scale);
+  }
+  return flat; // length 63 (21 points * 3 coords)
+}
+
+function distance(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
+// ---------- KNN CLASSIFIER ----------
+// Returns { prediction, topK, nearestDist } so the debug panel can show what's happening under the hood.
+function classify(vector) {
+  const scored = [];
+  for (const letter of LETTERS) {
+    for (const sample of trainingData[letter]) {
+      scored.push({ letter, dist: distance(vector, sample) });
+    }
+  }
+  if (scored.length === 0) return { prediction: null, topK: [], nearestDist: null };
+
+  scored.sort((a, b) => a.dist - b.dist);
+  const topK = scored.slice(0, KNN_K);
+  const nearestDist = topK[0].dist;
+
+  // reject if nothing is actually close (avoids confident-looking nonsense guesses)
+  if (nearestDist > DISTANCE_REJECT_THRESHOLD) {
+    return { prediction: null, topK, nearestDist };
+  }
+
+  const votes = {};
+  for (const { letter } of topK) votes[letter] = (votes[letter] || 0) + 1;
+
+  let best = null, bestCount = -1;
+  for (const [letter, count] of Object.entries(votes)) {
+    if (count > bestCount) { best = letter; bestCount = count; }
+  }
+  return { prediction: best, topK, nearestDist };
+}
+
+// ---------- SMOOTHING ----------
+function updateSmoothedPrediction(rawPrediction) {
+  predictionHistory.push(rawPrediction);
+  if (predictionHistory.length > SMOOTHING_WINDOW) predictionHistory.shift();
+
+  const counts = {};
+  for (const p of predictionHistory) {
+    if (p === null) continue;
+    counts[p] = (counts[p] || 0) + 1;
+  }
+
+  let best = null, bestCount = 0;
+  for (const [letter, count] of Object.entries(counts)) {
+    if (count > bestCount) { best = letter; bestCount = count; }
+  }
+
+  const agreement = bestCount / predictionHistory.length;
+  if (best && agreement >= STABILITY_THRESHOLD) {
+    if (best !== stableLetter) {
+      stableLetter = best;
+      word += best; // commit once, on the transition into stability
+      renderWord();
+    }
+    letterDisplay.textContent = best;
+  } else {
+    stableLetter = null;
+    letterDisplay.textContent = "…";
+  }
+}
+
+// ---------- DRAWING ----------
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function drawLandmarks(landmarks) {
+  ctx.strokeStyle = "#6ee7b7";
+  ctx.lineWidth = 2;
+  for (const [a, b] of CONNECTIONS) {
+    const p1 = landmarks[a], p2 = landmarks[b];
+    ctx.beginPath();
+    ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+    ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#f5f5f7";
+  for (const p of landmarks) {
+    ctx.beginPath();
+    ctx.arc(p.x * canvas.width, p.y * canvas.height, 3, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
+
+// ---------- DEBUG PANEL ----------
+const dbgRaw = document.getElementById("dbgRaw");
+const dbgDist = document.getElementById("dbgDist");
+const candidateList = document.getElementById("candidateList");
+
+function renderDebug(prediction, topK, nearestDist) {
+  dbgRaw.textContent = prediction || "(rejected — no close match)";
+  dbgDist.textContent = nearestDist !== null ? nearestDist.toFixed(3) : "—";
+
+  candidateList.innerHTML = "";
+  const seen = new Set();
+  for (const { letter, dist } of topK) {
+    if (seen.has(letter)) continue; // show each letter once, at its best distance
+    seen.add(letter);
+    const row = document.createElement("div");
+    if (letter === prediction) row.classList.add("best");
+    row.innerHTML = `<span>${letter}</span><span>${dist.toFixed(3)}</span>`;
+    candidateList.appendChild(row);
+  }
+}
+
+// ---------- MAIN LOOP ----------
+let handLandmarker;
+
+async function init() {
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+    },
+    runningMode: "VIDEO",
+    numHands: 1
+  });
+
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+  video.srcObject = stream;
+  await new Promise(resolve => video.onloadedmetadata = resolve);
+  video.play();
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  requestAnimationFrame(loop);
+}
+
+let lastVideoTime = -1;
+
+function loop() {
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const results = handLandmarker.detectForVideo(video, performance.now());
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    if (results.landmarks && results.landmarks.length > 0) {
+      const landmarks = results.landmarks[0];
+      drawLandmarks(landmarks);
+      handIndicator.textContent = "Hand: detected";
+
+      const vector = normalizeLandmarks(landmarks);
+
+      if (recordingLetter) {
+        trainingData[recordingLetter].push(vector);
+      } else {
+        const { prediction, topK, nearestDist } = classify(vector);
+        updateSmoothedPrediction(prediction);
+        renderDebug(prediction, topK, nearestDist);
+      }
+    } else {
+      handIndicator.textContent = "Hand: not detected";
+      updateSmoothedPrediction(null);
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+init().catch(err => {
+  console.error(err);
+  alert("Camera or model failed to load. Check console for details.");
+});
+</script>
+</body>
+</html>
